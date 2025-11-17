@@ -6,23 +6,22 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 
-// Twilio webhook
+// --- TWILIO WEBHOOK ---
 app.post("/ai-call", (req, res) => {
   const twiml = `
     <Response>
       <Say voice="Polly.Joanna">Connecting you now.</Say>
       <Connect>
-      <Stream url="wss://${process.env.RENDER_EXTERNAL_HOSTNAME}/ws" />
-
-
+        <Stream url="wss://${process.env.RENDER_EXTERNAL_URL}/ws" />
       </Connect>
     </Response>
   `;
+
   res.type("text/xml");
   res.send(twiml);
 });
 
-// WebSocket between Twilio <-> OpenAI Realtime
+// --- WEBSOCKET SERVER ---
 const wss = new WebSocketServer({ noServer: true });
 
 wss.on("connection", async (ws) => {
@@ -33,36 +32,33 @@ wss.on("connection", async (ws) => {
     {
       headers: {
         "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
-        "OpenAI-Beta": "realtime=v1"
-      }
+        "OpenAI-Beta": "realtime=v1",
+      },
     }
   );
 
   ai.on("open", () => {
     console.log("OpenAI Connected!");
-    ai.send(JSON.stringify({
-      type: "session.start"
-    }));
+    ai.send(JSON.stringify({ type: "session.start" }));
   });
 
-  ai.on("message", (msg) => {
-    ws.send(msg);
-  });
-
-  ws.on("message", (msg) => {
-    ai.send(msg);
-  });
-
+  ai.on("message", (msg) => ws.send(msg));
+  ws.on("message", (msg) => ai.send(msg));
   ws.on("close", () => ai.close());
 });
 
-// Needed for Render
-const server = app.listen(process.env.PORT || 10000);
+// --- RENDER SERVER SETUP ---
+const server = app.listen(process.env.PORT || 10000, () => {
+  console.log("Server running on port", process.env.PORT || 10000);
+});
 
+// --- HANDLE WEBSOCKET UPGRADE ---
 server.on("upgrade", (req, socket, head) => {
   if (req.url === "/ws") {
     wss.handleUpgrade(req, socket, head, (ws) => {
       wss.emit("connection", ws, req);
     });
+  } else {
+    socket.destroy();
   }
 });
