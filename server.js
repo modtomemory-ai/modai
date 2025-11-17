@@ -12,7 +12,8 @@ app.post("/ai-call", (req, res) => {
     <Response>
       <Say voice="Polly.Joanna">Connecting you now.</Say>
       <Connect>
-       <Stream url="wss://${process.env.RENDER_EXTERNAL_HOSTNAME}/ws" />
+      <Stream url="wss://${process.env.RENDER_EXTERNAL_HOSTNAME}/ws" />
+
 
       </Connect>
     </Response>
