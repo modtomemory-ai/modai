@@ -1,4 +1,3 @@
-// server.js
 const express = require("express");
 const WebSocket = require("ws");
 require("dotenv").config();
