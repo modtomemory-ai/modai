@@ -1,53 +1,58 @@
-// server.js (100% Railway compatible)
-
-const express = require("express");
-const cors = require("cors");
-const OpenAI = require("openai");
+import express from "express";
+import bodyParser from "body-parser";
+import { OpenAI } from "openai";
 
 const app = express();
-app.use(cors());
-app.use(express.json());
+app.use(bodyParser.urlencoded({ extended: false }));
 
-// Initialize OpenAI (Railway variable)
-const client = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
-
-// Basic route test
+// ---------- Root Test ----------
 app.get("/", (req, res) => {
   res.send("MODAI Server is running ✔️");
 });
 
-// AI API route
-app.post("/api/chat", async (req, res) => {
+// ---------- AI CALL ROUTE ----------
+app.post("/ai-call", async (req, res) => {
   try {
-    const prompt = req.body.prompt;
+    console.log("Twilio Request Received:", req.body);
 
-    if (!prompt) {
-      return res.status(400).json({ error: "Prompt missing" });
-    }
+    const clientMessage = req.body.SpeechResult || "No speech detected";
 
-    const completion = await client.chat.completions.create({
+    const openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+    });
+
+    const aiReply = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
-        { role: "system", content: "You are ModAI assistant." },
-        { role: "user", content: prompt }
-      ]
+        { role: "system", content: "You are a helpful assistant." },
+        { role: "user", content: clientMessage },
+      ],
     });
 
-    res.json({
-      reply: completion.choices[0].message.content
-    });
+    const replyText = aiReply.choices[0].message.content;
 
-  } catch (error) {
-    console.error("Error:", error.message);
-    res.status(500).json({ error: error.message });
+    const twiml = `
+      <Response>
+        <Say voice="Polly.Joanna">${replyText}</Say>
+      </Response>
+    `;
+
+    res.type("text/xml");
+    res.send(twiml);
+
+  } catch (err) {
+    console.error("AI-Call Error:", err);
+    res.type("text/xml");
+    res.send(`
+      <Response>
+        <Say>Sorry, an error happened.</Say>
+      </Response>
+    `);
   }
 });
 
-// Railway port binding
-const PORT = process.env.PORT || 3000;
-
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+// ---------- Start App ----------
+const port = process.env.PORT || 3000;
+app.listen(port, () => {
+  console.log("Server started on port", port);
 });
