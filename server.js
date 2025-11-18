@@ -1,58 +1,74 @@
 import express from "express";
+import { WebSocketServer } from "ws";
+import twilio from "twilio";
 import bodyParser from "body-parser";
-import { OpenAI } from "openai";
+import { RealtimeClient } from "@openai/realtime-api";
 
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
+app.use(bodyParser.json());
 
-// ---------- Root Test ----------
-app.get("/", (req, res) => {
-  res.send("MODAI Server is running ✔️");
+// ---------- TWILIO WEBHOOK ----------
+app.post("/ai-call", (req, res) => {
+  const twiml = new twilio.twiml.VoiceResponse();
+
+  const connect = twiml.connect();
+  connect.stream({
+    url: "wss://modai-production.up.railway.app/ai-stream"
+  });
+
+  res.type("text/xml");
+  res.send(twiml.toString());
 });
 
-// ---------- AI CALL ROUTE ----------
-app.post("/ai-call", async (req, res) => {
-  try {
-    console.log("Twilio Request Received:", req.body);
+// ---------- WEBSOCKET SERVER ----------
+const wss = new WebSocketServer({ noServer: true });
 
-    const clientMessage = req.body.SpeechResult || "No speech detected";
+wss.on("connection", async (ws) => {
+  console.log("Twilio Stream Connected ✔");
 
-    const openai = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
+  // OpenAI realtime client
+  const client = new RealtimeClient({
+    apiKey: process.env.OPENAI_API_KEY,
+    model: "gpt-4o-realtime-preview-2024-12-17",
+  });
+
+  await client.connect();
+
+  client.on("response.output_text.delta", (event) => {
+    ws.send(JSON.stringify({
+      event: "media",
+      media: {
+        payload: Buffer.from(event.delta).toString("base64")
+      }
+    }));
+  });
+
+  ws.on("message", (data) => {
+    const msg = JSON.parse(data);
+
+    if (msg.event === "media") {
+      client.inputAudio(Buffer.from(msg.media.payload, "base64"));
+    }
+  });
+
+  ws.on("close", () => {
+    console.log("Twilio Stream Disconnected ❌");
+    client.disconnect();
+  });
+});
+
+// ---------- UPGRADE HTTP → WS ----------
+const server = app.listen(process.env.PORT || 3000, () => {
+  console.log("MODAI Server is running");
+});
+
+server.on("upgrade", (req, socket, head) => {
+  if (req.url === "/ai-stream") {
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      wss.emit("connection", ws, req);
     });
-
-    const aiReply = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        { role: "system", content: "You are a helpful assistant." },
-        { role: "user", content: clientMessage },
-      ],
-    });
-
-    const replyText = aiReply.choices[0].message.content;
-
-    const twiml = `
-      <Response>
-        <Say voice="Polly.Joanna">${replyText}</Say>
-      </Response>
-    `;
-
-    res.type("text/xml");
-    res.send(twiml);
-
-  } catch (err) {
-    console.error("AI-Call Error:", err);
-    res.type("text/xml");
-    res.send(`
-      <Response>
-        <Say>Sorry, an error happened.</Say>
-      </Response>
-    `);
+  } else {
+    socket.destroy();
   }
-});
-
-// ---------- Start App ----------
-const port = process.env.PORT || 3000;
-app.listen(port, () => {
-  console.log("Server started on port", port);
 });
