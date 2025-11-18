@@ -4,42 +4,57 @@ import OpenAI from "openai";
 import Twilio from "twilio";
 
 const app = express();
-const PORT = process.env.PORT || 3000;
-
-// Twilio uses CommonJS inside, so we must do default import
 const { twiml } = Twilio;
 
 app.use(bodyParser.urlencoded({ extended: false }));
-app.use(bodyParser.json());
 
-// Initialize OpenAI
-const client = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-});
+// OpenAI Init
+const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// Health check
-app.get("/", (req, res) => {
-  res.send("MODAI Server is running ✔");
-});
-
-// Twilio AI Call Webhook
+// Start point (first message)
 app.post("/ai-call", async (req, res) => {
   const response = new twiml.VoiceResponse();
 
+  const gather = response.gather({
+    input: "speech",
+    action: "/process-voice",
+    speechTimeout: "auto",
+  });
+
+  gather.say("Hello! I am your AI assistant. How can I help you today?");
+
+  res.type("text/xml");
+  res.send(response.toString());
+});
+
+// Process caller's speech
+app.post("/process-voice", async (req, res) => {
+  const userSpeech = req.body.SpeechResult || "I didn't hear anything.";
+
+  const response = new twiml.VoiceResponse();
+
   try {
-    const completion = await client.chat.completions.create({
+    // Send user speech to OpenAI
+    const aiReply = await client.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
-        { role: "system", content: "Respond like a polite AI voice assistant." },
-        { role: "user", content: "Caller spoke something." }
+        { role: "system", content: "Speak short, assistant-style responses." },
+        { role: "user", content: userSpeech }
       ]
     });
 
-    const answer = completion.choices[0].message.content;
-    response.say(answer);
+    const answer = aiReply.choices[0].message.content;
+
+    // Continue conversation
+    const gather = response.gather({
+      input: "speech",
+      action: "/process-voice",
+      speechTimeout: "auto"
+    });
+
+    gather.say(answer);
 
   } catch (error) {
-    console.error("AI Error:", error);
     response.say("Sorry, an error occurred.");
   }
 
@@ -47,7 +62,5 @@ app.post("/ai-call", async (req, res) => {
   res.send(response.toString());
 });
 
-// Start Server
-app.listen(PORT, () => {
-  console.log(`🚀 MODAI server running on port ${PORT}`);
-});
+// Server
+app.listen(process.env.PORT || 3000);
