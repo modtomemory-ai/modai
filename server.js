@@ -1,84 +1,53 @@
+// server.js (100% Railway compatible)
+
 const express = require("express");
-const WebSocket = require("ws");
-require("dotenv").config();
+const cors = require("cors");
+const OpenAI = require("openai");
 
 const app = express();
-app.use(express.urlencoded({ extended: false }));
+app.use(cors());
 app.use(express.json());
 
-const PORT = process.env.PORT || 3000;
-const PUBLIC_HOST = process.env.PUBLIC_HOST || "modai-production.up.railway.app";
+// Initialize OpenAI (Railway variable)
+const client = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
 
-// Simple health-check
+// Basic route test
 app.get("/", (req, res) => {
-  res.send("OK – modai voice server running");
+  res.send("MODAI Server is running ✔️");
 });
 
-// 👉 Twilio webhook – returns TwiML
-app.post("/ai-call", (req, res) => {
-  const twiml = `
-    <Response>
-      <Say voice="Polly.Joanna">Connecting you now.</Say>
-      <Connect>
-        <Stream url="wss://${PUBLIC_HOST}/ws" />
-      </Connect>
-    </Response>
-  `;
-  res.type("text/xml");
-  res.send(twiml.trim());
-});
+// AI API route
+app.post("/api/chat", async (req, res) => {
+  try {
+    const prompt = req.body.prompt;
 
-// 👉 WebSocket server (Twilio <-> OpenAI Realtime)
-const wss = new WebSocket.Server({ noServer: true });
-
-wss.on("connection", (ws) => {
-  console.log("✅ Twilio WebSocket connected");
-
-  const ai = new WebSocket(
-    "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17",
-    {
-      headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-        "OpenAI-Beta": "realtime=v1",
-      },
+    if (!prompt) {
+      return res.status(400).json({ error: "Prompt missing" });
     }
-  );
 
-  ai.on("open", () => {
-    console.log("✅ OpenAI Realtime connected");
-    ai.send(
-      JSON.stringify({
-        type: "session.start",
-        instructions: "You are a helpful voice assistant on the phone.",
-      })
-    );
-  });
-
-  // OpenAI → Twilio
-  ai.on("message", (data) => {
-    if (ws.readyState === WebSocket.OPEN) ws.send(data);
-  });
-
-  // Twilio → OpenAI
-  ws.on("message", (data) => {
-    if (ai.readyState === WebSocket.OPEN) ai.send(data);
-  });
-
-  ws.on("close", () => ai.close());
-  ai.on("close", () => ws.close());
-});
-
-// 👉 Attach WebSocket upgrade handler
-const server = app.listen(PORT, () => {
-  console.log(`🚀 Server listening on port ${PORT}`);
-});
-
-server.on("upgrade", (req, socket, head) => {
-  if (req.url === "/ws") {
-    wss.handleUpgrade(req, socket, head, (ws) => {
-      wss.emit("connection", ws, req);
+    const completion = await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        { role: "system", content: "You are ModAI assistant." },
+        { role: "user", content: prompt }
+      ]
     });
-  } else {
-    socket.destroy();
+
+    res.json({
+      reply: completion.choices[0].message.content
+    });
+
+  } catch (error) {
+    console.error("Error:", error.message);
+    res.status(500).json({ error: error.message });
   }
+});
+
+// Railway port binding
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
 });
